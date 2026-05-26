@@ -98,9 +98,7 @@ Model-performance comparison:
 ```text
 .
 ├── README.md
-├── .gitignore
 ├── CITATION_OR_ATTRIBUTION.md
-├── github_upload_steps.md
 ├── data/
 │   ├── README.md
 │   └── LoanApprovalPrediction.csv
