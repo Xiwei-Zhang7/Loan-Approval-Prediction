@@ -1,0 +1,4 @@
+model,accuracy,precision,recall,f1_score,auc,main_comment
+Logistic Regression,0.7395,0.5714,0.6486,0.6076,0.7956,Best AUC and recall; recommended default model when catching risky loans is the priority
+k-Nearest Neighbors,0.8067,0.8182,0.4865,0.6102,0.7189,Highest accuracy and precision; useful when avoiding false declines is the priority
+Decision Tree,0.6639,0.4667,0.5676,0.5122,0.6374,Most interpretable but weakest predictive performance
