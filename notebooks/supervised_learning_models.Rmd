@@ -1,0 +1,252 @@
+---
+title: "Loan Approval Prediction: Supervised Learning Models"
+author: "Xiwei Zhang"
+output: html_document
+---
+
+## Purpose
+
+This notebook focuses on the supervised learning component of a group loan approval prediction project.
+
+The goal is to classify loan applications as approved or denied using applicant-level attributes.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(readr)
+library(caret)
+library(pROC)
+library(rpart)
+library(class)
+library(ggplot2)
+```
+
+## 1. Load Data
+
+```{r load-data}
+loan_raw <- read_csv("data/LoanApprovalPrediction.csv", show_col_types = FALSE)
+
+glimpse(loan_raw)
+table(loan_raw$Loan_Status)
+```
+
+## 2. Basic Preprocessing
+
+```{r preprocessing}
+loan <- loan_raw %>%
+  select(-Loan_ID)
+
+# Convert character variables to factors
+loan <- loan %>%
+  mutate(across(where(is.character), as.factor))
+
+# Make Loan_Status explicit
+loan$Loan_Status <- factor(loan$Loan_Status, levels = c("Y", "N"))
+
+# Impute missing values
+mode_value <- function(x) {
+  ux <- na.omit(unique(x))
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# Numeric imputation
+loan <- loan %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
+
+# Factor imputation
+factor_cols <- names(loan)[sapply(loan, is.factor)]
+
+for (col in factor_cols) {
+  if (any(is.na(loan[[col]]))) {
+    loan[[col]][is.na(loan[[col]])] <- mode_value(loan[[col]])
+  }
+}
+
+summary(loan)
+```
+
+## 3. Train/Test Split
+
+```{r split}
+set.seed(123)
+
+train_index <- createDataPartition(loan$Loan_Status, p = 0.8, list = FALSE)
+
+train_data <- loan[train_index, ]
+test_data  <- loan[-train_index, ]
+
+table(train_data$Loan_Status)
+table(test_data$Loan_Status)
+```
+
+## 4. Undersampling the Training Set
+
+The dataset is imbalanced, with more approved loans than denied loans. To reduce majority-class bias, the training set is downsampled.
+
+```{r undersampling}
+set.seed(123)
+
+train_balanced <- downSample(
+  x = train_data %>% select(-Loan_Status),
+  y = train_data$Loan_Status
+)
+
+names(train_balanced)[names(train_balanced) == "Class"] <- "Loan_Status"
+
+table(train_balanced$Loan_Status)
+```
+
+## 5. Evaluation Helper
+
+Here, the denied class `N` is treated as the risk-focused class.
+
+```{r evaluation-helper}
+evaluate_model <- function(truth, prob_N, threshold = 0.5) {
+  truth <- factor(truth, levels = c("Y", "N"))
+  pred <- factor(ifelse(prob_N >= threshold, "N", "Y"), levels = c("Y", "N"))
+
+  cm <- confusionMatrix(pred, truth, positive = "N")
+
+  roc_obj <- roc(
+    response = truth,
+    predictor = prob_N,
+    levels = c("Y", "N"),
+    direction = "<",
+    quiet = TRUE
+  )
+
+  data.frame(
+    accuracy  = as.numeric(cm$overall["Accuracy"]),
+    precision = as.numeric(cm$byClass["Pos Pred Value"]),
+    recall    = as.numeric(cm$byClass["Sensitivity"]),
+    f1_score  = as.numeric(cm$byClass["F1"]),
+    auc       = as.numeric(auc(roc_obj))
+  )
+}
+```
+
+## 6. Logistic Regression
+
+```{r logistic-regression}
+logit_model <- glm(
+  Loan_Status ~ .,
+  data = train_balanced,
+  family = binomial
+)
+
+summary(logit_model)
+
+# With levels c("Y", "N"), glm predicts the probability of the second level, N.
+logit_prob_N <- predict(logit_model, newdata = test_data, type = "response")
+
+logit_result <- evaluate_model(test_data$Loan_Status, logit_prob_N)
+logit_result
+```
+
+## 7. Decision Tree
+
+```{r decision-tree}
+tree_model <- rpart(
+  Loan_Status ~ .,
+  data = train_balanced,
+  method = "class",
+  minbucket = 10
+)
+
+plot(tree_model, main = "Decision Tree for Loan Status")
+text(tree_model, use.n = TRUE, all = TRUE, cex = 0.8)
+
+tree_prob_N <- predict(tree_model, newdata = test_data, type = "prob")[, "N"]
+
+tree_result <- evaluate_model(test_data$Loan_Status, tree_prob_N)
+tree_result
+```
+
+## 8. k-Nearest Neighbors
+
+For k-NN, categorical variables are converted into dummy variables, and all predictors are centered and scaled.
+
+```{r knn}
+set.seed(123)
+
+# Create dummy variables
+dummy_obj <- dummyVars(Loan_Status ~ ., data = train_balanced)
+
+train_x <- predict(dummy_obj, newdata = train_balanced) %>% as.data.frame()
+test_x  <- predict(dummy_obj, newdata = test_data) %>% as.data.frame()
+
+# Center and scale
+pre_obj <- preProcess(train_x, method = c("center", "scale"))
+
+train_x_scaled <- predict(pre_obj, train_x)
+test_x_scaled  <- predict(pre_obj, test_x)
+
+train_y <- train_balanced$Loan_Status
+
+# Search over odd k values
+k_values <- seq(1, 41, by = 2)
+acc_values <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  pred_k <- knn(
+    train = train_x_scaled,
+    test = test_x_scaled,
+    cl = train_y,
+    k = k_values[i]
+  )
+  acc_values[i] <- mean(pred_k == test_data$Loan_Status)
+}
+
+data.frame(k = k_values, accuracy = acc_values)
+
+best_k <- k_values[which.max(acc_values)]
+best_k
+
+knn_pred <- knn(
+  train = train_x_scaled,
+  test = test_x_scaled,
+  cl = train_y,
+  k = best_k,
+  prob = TRUE
+)
+
+# Approximate class probability from vote proportion
+vote_prob <- attr(knn_pred, "prob")
+knn_prob_N <- ifelse(knn_pred == "N", vote_prob, 1 - vote_prob)
+
+knn_result <- evaluate_model(test_data$Loan_Status, knn_prob_N)
+knn_result
+```
+
+## 9. Compare Models
+
+```{r compare-models}
+model_results <- bind_rows(
+  Logistic_Regression = logit_result,
+  Decision_Tree = tree_result,
+  k_Nearest_Neighbors = knn_result,
+  .id = "model"
+)
+
+model_results
+
+write_csv(model_results, "results/model_performance_from_notebook.csv")
+```
+
+## 10. Reported Results from the Original Project
+
+The original group project reported the following summary:
+
+```{r reported-results}
+reported_results <- read_csv("results/model_performance_summary.csv", show_col_types = FALSE)
+reported_results
+```
+
+## 11. Interpretation
+
+The decision tree is the easiest model to explain, but it has weaker predictive performance.
+
+k-nearest neighbors has the highest accuracy and precision. This is useful when the business goal is to avoid rejecting good applicants.
+
+Logistic regression has the strongest AUC and recall. This is useful when the business goal is to catch more risky applications and reduce potential loan losses.
+
+For that reason, logistic regression is recommended as the default supervised model, while k-nearest neighbors can be used as an accuracy-focused second-stage model.
