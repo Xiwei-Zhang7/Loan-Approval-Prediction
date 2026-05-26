@@ -1,0 +1,1583 @@
+---
+title: "Final Project"
+author: "Lening Gao"
+date: "2025-04-05"
+output: word_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Introduction
+
+In financial services, accurately predicting loan approvals is essential
+for mitigating risk and ensuring equitable lending practices. This
+project aims to develop a predictive model for loan approval decisions,
+utilizing a dataset containing various applicant attributes.
+
+The initial phase involved comprehensive data preprocessing: handling
+missing values, encoding categorical variables, and normalizing
+numerical features. Exploratory data analysis was conducted to discern
+patterns and relationships within the data, including the visualization.
+
+Subsequently, dimensionality reduction techniques, such as Principal
+Component Analysis (PCA), were applied to distill the most informative
+features, thereby enhancing model performance and interpretability. The
+modeling phase encompassed both supervised and unsupervised learning
+approaches. Supervised methods included logistic regression, decision
+trees, and k-nearest neighbors (KNN), while unsupervised techniques
+involved clustering algorithms like k-prototypes and hierarchical
+clustering based on Gower distance.
+
+## Import Data
+
+```{r echo=FALSE}
+#load dplyr package for future use
+library(dplyr)
+
+# clear environment
+rm(list = ls())
+
+# set work directory
+setwd("~/STAT 4601/Final Project")
+
+# read dataset file
+loandata <- read.csv("LoanApprovalPrediction.csv")
+
+# examine data
+str(loandata)
+head(loandata)
+```
+
+The dataset consists of 598 cases and 13 attributes, which provide
+information about applicants and their loan applications. The attributes
+are as follows:
+
+-   Loan_ID: A unique application ID assigned to each applicant.
+
+-   Gender: The applicant's gender (Male or Female).
+
+-   Married: The applicant's marital status (Married or Not Married).
+
+-   Dependents: The number of people financially dependent on the
+    applicant.
+
+-   Education: The applicant’s education level (Graduate or Not
+    Graduate).
+
+-   Self_Employment: Indicates whether the applicant is self-employed.
+
+-   ApplicantIncome: The total income of the applicant.
+
+-   CoapplicantIncome: The total income of the co-applicant (if any).
+
+-   LoanAmount: The loan amount requested by the applicant.
+
+-   Loan_Amount_Term: The duration of the loan in months.
+
+-   Credit_History: Indicates whether the applicant has a credit
+    history.
+
+-   Property_Area: The type of area where the applicant resides (Urban,
+    Semi-Urban, or Rural).
+
+-   Loan_Status: The outcome of the loan application (Approved or Not
+    Approved).
+
+In this report, we will apply machine learning techniques to predict
+loan approvals based on applicant information. The target variable for
+our analysis is "Loan_Status".
+
+# Preprocessing and Data Analysis
+
+## Missing Values and Duplicates
+
+The dataset contains a total of 93 rows with a missing entry in at least
+one of the columns. Through statistics, we can intuitively get the total
+number of rows that have missing values and the number of missing values
+in each variable.
+
+```{r echo=FALSE}
+# check if there are missing data entries
+sum(rowSums(is.na(loandata)) > 0)
+
+#check where the missing data are
+data.frame(total_missing = colSums(is.na(loandata)), rate = paste0(round(colSums(is.na(loandata))*100/nrow(loandata), 2), "%"))
+```
+
+The total number of rows with missing values is 93. The columns which
+contain the missing values are Dependents, LoanAmount, Loan_Amount_Term,
+and Credit_History. To address missing values in dataset, employing mean
+imputation for numeric variables and mode imputation for categorical
+variables is a straightforward and effective approach. But before
+applying those process, we need to check for Missing Completely At
+Random (MCAR).
+
+```{r echo=FALSE}
+# Install and load the BaylorEdPsych package
+library(misty)
+library(mvnmle)
+# Perform Little's MCAR test on your dataset
+na.test(loandata)
+```
+
+Since for p-value = 0.133, this value is greater than the conventional
+threshold of 0.05. We can conclued that fail to reject the null
+hypothesis that the data are Missing Completely At Random (MCAR). This
+suggests there's no strong evidence against the assumption that the
+missingness in data is entirely random.
+
+Thus for each numeric column with missing values, replace the NA entries
+with the mean of the non-missing values in that column. And for
+categorical variables, replace missing values with the mode (the most
+frequent category).
+
+```{r echo=FALSE}
+# replace numeric missing values
+for (col in c("Dependents", "LoanAmount", "Loan_Amount_Term")) {
+  loandata[[col]][is.na(loandata[[col]])] <- round(mean(loandata[[col]], na.rm = TRUE))
+}
+
+# replace categoric missing values
+loandata$Credit_History[is.na(loandata$Credit_History)] <- which.max(loandata$Credit_History)
+
+# check if there are missing data entries
+sum(rowSums(is.na(loandata)) > 0)
+```
+
+We've also assigned the proper datatype to each column and checked for
+any duplicates but found none. Since there are no duplicate
+applications, we can remove the ID variable as it will not be needed for
+future analysis. We now have a total of 598 rows and 12 variables in our
+dataset.
+
+```{r echo=FALSE}
+# check if there are any duplicates by substracting number of unique rows from number of total rows
+nrow(loandata) - n_distinct(loandata)
+
+# assign appropriate data type to each variable
+loandata <- transform(loandata,
+                    Gender = as.factor(Gender),
+                    Married = as.factor(Married),
+                    Education = as.factor(Education),
+                    Self_Employed = as.factor(Self_Employed),
+                    ApplicantIncome = as.numeric(ApplicantIncome),
+                    LoanAmount = as.numeric(LoanAmount),
+                    Loan_Amount_Term = as.numeric(Loan_Amount_Term),
+                    Credit_History = as.factor(Credit_History),
+                    Property_Area = as.factor(Property_Area),
+                    Loan_Status = as.factor(Loan_Status))
+
+# remove ID
+loandata <- loandata[,-1]
+
+# view data summary
+str(loandata)
+```
+
+## Visualization
+
+To begin our analysis, we examine the distribution of approved and
+rejected loans in the dataset.
+
+```{r echo=FALSE}
+library(ggplot2)
+
+# bar plot of frequency of loan satuses
+ggplot(loandata, aes(x = Loan_Status, fill = Loan_Status)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +  # add count above each bar
+  scale_fill_manual(values = c("Y" = "darkgreen", "N" = "darkred")) +
+  labs(title = "Frequency of Loan Statuses", 
+       x = "Loan Status", 
+       y = "Frequency") +
+  theme_minimal() +
+  coord_cartesian(clip = 'off')
+
+```
+
+There is a clear imbalance in the number of approved versus denied loan
+applications. Out of the total 598 cases, 411 applicants were granted a
+loan, while 187 were denied.
+
+We can also examine the distribution of all other attributes in our
+dataset.
+
+```{r echo=FALSE}
+# bar graphs of categorical and discrete variables
+for (i in colnames(loandata[,-c(6:9,12)])){
+  
+  plot.cat.attr <- ggplot(loandata, aes(x = !!sym(i))) +
+    geom_bar(stat = "count", position = "dodge", fill = "#575366") +
+    theme_minimal() +
+    labs(title = paste("Distribution of", gsub("_", " ", i)),
+         x = gsub("_", " ", i),
+         y = "Frequency")
+  print(plot.cat.attr)
+  
+}
+
+# histograms of continuous variables
+for (i in colnames(loandata[,c(6:9)])){
+  
+  plot.cts.attr <- ggplot(loandata, aes(x = !!sym(i))) +
+    geom_histogram(fill = "#575366", color = "black", bins = 30) +
+    labs(title = paste("Distribution of", gsub("_", " ", i)), 
+         x = gsub("_", " ", i),
+         y = "Frequency") +
+    theme_minimal()
+  
+  print(plot.cts.attr)
+  
+}
+```
+
+The categorical variables with two levels exhibit significant imbalances
+in their frequency distributions. Specifically, the dataset contains
+more male applicants, married individuals, graduate students,
+non-self-employed applicants, and individuals with a credit history.
+This suggests that the majority of loan applicants share certain
+demographic characteristics.
+
+For the Property Area variable, which has three levels, the distribution
+shows a similar number of rural and urban residents, while a larger
+number of applicants live in semi-urban areas.
+
+Regarding the Dependents variable, most applicants have no dependents,
+while the number of applicants with one to three dependents is
+significantly lower, indicating a right-skewed distribution.
+
+Among the continuous variables, Applicant Income, Co-applicant Income,
+and Loan Amount are heavily right-skewed, whereas Loan Amount Term
+exhibits strong left skewness.
+
+Given the imbalance within the categorical variables and the discrete
+variable, rather than focusing solely on raw counts, we will analyze the
+proportions of loan statuses within each of those variables to better
+understand their relationship with loan outcomes.
+
+```{r echo=FALSE}
+#for loop to create bar graph for every attribute to see influence on loan status
+for (i in setdiff(colnames(loandata[,-c(6:9)]), c("Loan_Status"))){
+  
+  #group by the factor and status of loan, count rows, add percentage and count
+  attr_count <- loandata %>%
+    group_by(!!sym(i), Loan_Status) %>%
+    tally() %>%
+    mutate(percentage = n / sum(n) * 100, TotalCount = sum(n))
+
+  #bar graph with y=percentage and the count on top of each bar
+  plotattr <- ggplot(attr_count, aes(x =!!sym(i) , y = percentage, 
+                                     fill = Loan_Status)) +
+    geom_bar(stat = "identity", col = "black") +
+    geom_text(aes(label = round(percentage)),
+              position = position_stack(vjust = 0.5), size = 2.5, 
+              colour = "white") + 
+    geom_text(aes(label = TotalCount), y=102.5, size = 2.5) +
+    scale_fill_manual(values = c("Y" = "darkgreen", "N" = "darkred")) +
+    theme_minimal() +
+    labs(title = paste("Loan Status by", gsub("_", " ", i)),
+         x = gsub("_", " ", i),
+         y = "Percentage",
+         fill = "Loan Status") 
+
+
+  print(plotattr)
+  
+}
+```
+
+Among the examined features, credit history stands out as the strongest
+predictor of loan approval. The "Credit History by Loan Status" plot
+shows that applicants with a credit history are far more likely to be
+approved, while those without one face a much higher likelihood of
+rejection. This suggests that having a credit history is a key
+requirement for banks to grant a loan.
+
+Other attributes show weaker but still noticeable relationships with
+loan status:
+
+-   Marital Status: Married applicants had a slightly higher approval
+    rate than unmarried ones.
+
+-   Dependents: Applicants with two dependents saw slightly more
+    approvals followed by those with no dependents, while those with one
+    or three dependents had similarly lower approval rates.
+
+-   Education: Graduates were approved at a slightly higher rate than
+    non-graduates.
+
+-   Property Area: Loan approvals were more common among applicants from
+    semi-urban areas, while those from urban and rural areas experienced
+    higher rejection rates in comparison.
+
+Finally, self-employment status and gender have no apparent impact on
+loan approval, suggesting that banks do not weigh these factors
+significantly when making lending decisions.
+
+For continuous variables, density plots were generated to compare the
+distributions of approved and rejected applicants.
+
+Before visualizing, zero values were excluded from co-applicant income,
+as co-applicants are typically intended to provide financial support
+when the primary applicant alone may not qualify for the loan. A value
+of zero likely indicates that no co-applicant was involved, rather than
+an actual absence of income. Since co-applicants are generally required
+for low-income applicants or those with insufficient credit history,
+removing these zeros ensures a more accurate representation in the
+density plots.
+
+```{r echo=FALSE}
+#plot continuous variables for each loan ststua
+for (i in setdiff(colnames(loandata[,c(6:9,12)]), c("Loan_Status"))) {
+  
+  #remove rows with coapplicant income of 0 for the coapplicant income plot
+  if (i == "CoapplicantIncome"){
+    ctsdata <- loandata %>%
+      filter(CoapplicantIncome != 0)
+  } else {
+    ctsdata <- loandata
+  }
+  
+  #create density plot with one function for each loan status
+  plotdensity <- ggplot(ctsdata, aes(x = !!sym(i), fill = Loan_Status)) +
+    geom_density(alpha = 0.6) +
+    scale_fill_manual(values = c("Y" = "lightgreen", "N" = "darkred")) +
+    labs(title = paste("Density Plot of", gsub("_", " ", i), "by Loan Status"),
+         x = gsub("_", " ", i), 
+         y = "Density", 
+         fill = "Loan Status") +
+    theme_minimal() +
+    theme(legend.position = "top") +
+    facet_wrap(~Loan_Status, scales = "free_y")
+  
+  print(plotdensity)
+}
+
+```
+
+The density plots show that the distributions for approved and rejected
+applicants are largely similar, with both peaking around the same
+values. Although the curves are similar for both loan statuses, there is
+a subtle but meaningful distinction. The density curve for approved
+applicants appears slimmer, indicating a higher concentration around the
+mode, whereas the rejected applicants exhibit greater variability. This
+may suggest that banks approve loan applications when these continuous
+variables fall within a preferred range.
+
+## Encoding Categorical Variables
+
+The dataset contains several binary variables, each with two categories.
+These were encoded using binary representation, where values were
+transformed into 0s and 1s. For the variable Property Area, which
+includes three categories, ordinal encoding was applied by assigning
+numeric values from 0 to 2.
+
+Encoding the categorical variables with two levels into binary form
+allows for the application of logistic Principal Component Analysis
+(logistic PCA) later in the analysis. Logistic PCA is a dimensionality
+reduction technique similar to standard PCA but specifically designed
+for binary data.
+
+The variable encodings are as follows:
+
+-   Gender: 1 = Male, 0 = Female
+
+-   Married: 1 = Married, 0 = Not Married
+
+-   Education: 1 = Graduate, 0 = Not Graduate
+
+-   Self_Employed: 1 = Self-employed, 0 = Not Self-employed
+
+-   Property_Area: 0 = Urban, 1 = Semi-urban, 2 = Rural
+
+-   Credit_History: 1 = Has a Credit History, 0 = No Credit History
+
+-   Loan_Status: 1 = Approved, 0 = Denied
+
+```{r echo=FALSE}
+numeric <- c("Dependents", "ApplicantIncome", "CoapplicantIncome", "LoanAmount", "Loan_Amount_Term")
+categoric <- c("Gender", "Married", "Education", "Self_Employed", "Property_Area", "Credit_History", "Loan_Status")
+```
+
+```{r echo=FALSE}
+# converting categoricals to numeric
+loanbinary <- loandata
+loanbinary$Gender <- ifelse(loanbinary$Gender == "Male", 1,0)
+loanbinary$Married <- ifelse(loanbinary$Married == "Yes", 1,0)
+loanbinary$Education <- ifelse(loanbinary$Education == "Graduate", 1,0)
+loanbinary$Self_Employed <- ifelse(loanbinary$Self_Employed == "Yes", 1,0)
+loanbinary$Property_Area <- ifelse(loanbinary$Property_Area == "Urban", 0, ifelse(loanbinary$Property_Area == "Semiurban", 1, 2))
+loanbinary$Loan_Status <- ifelse(loanbinary$Loan_Status == "Y", 1,0)
+
+# make the categorical variables as factor
+loanbinary[, categoric] <- lapply(loanbinary[, categoric], as.factor)
+
+str(loanbinary)
+```
+
+## Correlation
+
+To assess multicollinearity and redundancy among numeric variables, we
+computed pairwise Pearson correlations between numerical variables
+(Dependents, ApplicantIncome, CoapplicantIncome, LoanAmount,
+Loan_Amount_Term).
+
+```{r echo=FALSE, include=FALSE}
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor) {
+   usr <- par("usr"); on.exit(par(usr))
+   par(usr = c(0, 1, 0, 1))
+   r <- abs(cor(x, y))
+   txt <- format(c(r, 0.123456789), digits=digits)[1]
+   txt <- paste(prefix, txt, sep="")
+   if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)*r
+   text(0.5, 0.5, txt, cex = cex.cor)
+}
+
+     ## put histograms on the diagonal
+panel.hist <- function(x, ...) {
+   usr <- par("usr"); on.exit(par(usr))
+   par(usr = c(usr[1:2], 0, 1.5) )
+   h <- hist(x, plot = FALSE)
+   breaks <- h$breaks; nB <- length(breaks)
+   y <- h$counts; y <- y/max(y)
+   rect(breaks[-nB], 0, breaks[-1], y, col="cyan", ...)
+}
+```
+
+```{r echo=FALSE, warning=FALSE}
+# Check coorelation
+cormatrix <- cor(loanbinary[, numeric])
+cormatrix
+```
+
+The strongest correlation is observed between ApplicantIncome and
+LoanAmount (r ≈ 0.52), which is moderate and expected, as higher-income
+applicants tend to request larger loans.\
+All other variable pairs exhibit weak correlations (\|r\| \< 0.2),
+suggesting that they provide largely independent information.
+
+```{r echo=FALSE, warning=FALSE}
+# print graph
+pairs(loanbinary[, numeric], upper.panel = panel.cor, diag.panel = panel.hist)
+```
+
+Notably, CoapplicantIncome shows little to no correlation with the other
+variables, including LoanAmount, indicating it may carry distinct
+predictive value.
+
+Overall, the low correlation among most numeric variables supports their
+inclusion in modeling and dimensionality reduction without significant
+concern for multicollinearity.
+
+## Split data
+
+When preparing data for building a classification, it's essential to
+split the dataset into training and testing subsets to evaluate the
+model's performance accurately.
+
+The total amount of processed data is 598 obs., we divide it into
+training data and test data in a ratio of 80% to 20% (commonly used).
+
+```{r echo=FALSE}
+# Split train data and test data
+set.seed(123)
+
+#load library to split test and train sets
+library(caTools)
+
+#split the data ensuring that the proportion of Loan_Status are preserved
+#split the data so that around 80% of the data is in the training set and 20% is in the test set
+split <- sample.split(loanbinary$Loan_Status, SplitRatio = 0.80)
+
+#create train set
+train.data <- subset(loanbinary, split == TRUE)
+
+#create test set
+test.data <- subset(loanbinary, split == FALSE)
+
+table(train.data$Loan_Status)
+table(test.data$Loan_Status)
+```
+
+The training set contains 479 observation in total with 329 approved
+cases and 150 denied cases. The test set contains 119 total observations
+in total with 82 approved cases and 37 denied cases.
+
+## Undersampling
+
+The original dataset exhibited a noticeable imbalance between approved
+(Loan_Status = 1) and denied (Loan_Status = 0) loan applications, with
+approvals comprising a significantly larger proportion. This imbalance
+can bias supervised learning models toward the majority class, reducing
+their ability to correctly identify minority-class instances.
+
+To address this, we applied random undersampling to the majority class
+in the training set, resulting in a balanced dataset with an equal
+number of approved and denied cases.
+
+Also, undersampling was not applied to the test data in order to
+preserve its original class distribution, ensuring that model evaluation
+reflects real-world performance on naturally imbalanced data.
+
+```{r echo=FALSE}
+#set seed for reproducibility
+set.seed(123)
+
+#store number of "No" loan state observations
+num.mal <- nrow(train.data[train.data$Loan_Status == 0,])
+
+# apply undersampling
+balanced.data <- train.data %>%
+  group_by(Loan_Status) %>%
+  sample_n(size = num.mal) %>%
+  ungroup()
+
+# check again
+table(balanced.data$Loan_Status)
+```
+
+## Dimension Reduction
+
+To reduce the dimensionality of the dataset while preserving most of the
+variance in the numeric features, we applied Principal Component
+Analysis (PCA) exclusively to the numeric variables (Dependents,
+ApplicantIncome, CoapplicantIncome, LoanAmount, and Loan_Amount_Term).
+
+Standard PCA requires continuous, numerical input and does not offer
+meaningfully interpretations for categorical values, even if encoded as
+numbers, since the ordinal structure of such data may be arbitrary or
+misleading.
+
+```{r echo=FALSE}
+# create subset of the data with only numeric variables
+pca.numeric <- as.data.frame(balanced.data[, numeric])
+
+# compute the principal components
+pcamodel <- prcomp(pca.numeric, center = TRUE, scale = TRUE)
+
+# summary of PCA
+summary(pcamodel)
+```
+
+The resulting components show that the first principal component (PC1)
+accounts for 29.9% of the total variance, and the first four components
+together capture over 90.6% of the total variance. This justifies the
+use of a reduced set of principal components in downstream analysis, as
+they retain most of the informative variability of the numeric data
+while minimizing redundancy.
+
+```{r echo=FALSE}
+# pca plot
+plot(pcamodel, col = heat.colors(11))
+```
+
+We retained the first four principal components, which together capture
+approximately 90.6% of the total variance in the numeric variables. This
+strikes a balance between dimensionality reduction and information
+retention, while excluding the fifth component, which contributes
+minimal additional variance.
+
+```{r echo=FALSE}
+pcamodel$rotation[,1:4]
+```
+
+**PC1** = 0.71 x LoanAmount + 0.62 x ApplicantIncome + 0.24 x
+(Dependents + CoapplicantIncome) + 0.09 x Loan_Amount_Term
+
+-   PC1 captures the combined effect of the loan amount and the
+    applicant's income.
+
+**PC2** = - 0.87 x CoapplicantIncome + 0.41 x ApplicantIncome + 0.26 x
+Loan_Amount_Term - 0.11 x LoanAmount
+
+-   PC2 captures the effect of the co-applicant income with some
+    contrast from the applicant income.
+
+-   Hence, it it comparing how much the coapplicant earns against the
+    salary of the applicant.
+
+PC3 = -0.75 x Loan_Amount_Term + 0.63 x Dependents - 0.18 x
+CoapplicantIncome - 0.11 x LoanAmount + 0.06 x ApplicantIncome
+
+-   PC3 captures the effect of the loan amount term versus the number of
+    dependents.
+
+-   Hence, it is comparing how long the applicant will be granted the
+    loan against how many people depend on them financially
+
+PC4 = 0.74 x Dependents + 0.60 x Loan_Amount_Term - 0.29 x
+ApplicantIncome -0.10 x LoanAmount + 0.06 x CoapplicantIncome
+
+-   PC4 captures the combined effect of the number of dependents and the
+    length of the loan.
+
+-   PC3 is the contrast between the length of the loan and the number of
+    dependents meanwhile PC4 is their merged effect.
+
+For the binary variables, we applied Logistic Principal Component
+Analysis (Logistic PCA) to perform dimensionality reduction on it.
+Standard PCA is not suitable for binary data due to its assumption of
+continuous variables. The principal components for the binary variables
+will be referred to as PCB and the principal components for the
+numerical variables will be referred to as PC.
+
+Since Logistic PCA is only applicable to binary variables, we will
+remove Property_Area because it is ternary. The target variable is also
+not included.
+
+```{r echo=FALSE}
+library(logisticPCA)
+
+# Categorical variables
+cate <- categoric[!categoric %in% c("Property_Area", "Loan_Status")]
+
+# get data into 1/0 binary numerical values
+pca.categori <- as.data.frame(lapply(balanced.data[cate], function(x) as.numeric(as.character(x))))
+```
+
+```{r echo=FALSE, warning=FALSE}
+# check for k and m
+set.seed(123)
+negloglikes <- cv.lpca((pca.categori), ks = 1:5, ms = 1:10)
+plot(negloglikes)
+```
+
+We determined the optimal number of principal components is k=4 and the
+saturation parameter is m=5 through cross-validation, selecting the
+combination that minimized the negative log-likelihood.
+
+```{r echo=FALSE}
+(pcanummodel <- logisticPCA((pca.categori), k=4, m=5))
+
+loadings <- pcanummodel$U
+rownames(loadings) <- cate
+```
+
+A logistic PCA was performed on the binary categorical variables,
+selecting k = 4 components. This configuration explained 94% of the
+deviance, and shows a large amount of data variability is captured while
+keeping the model simple. The choice balances the trade-off between
+model complexity and explanation.
+
+PCB1 = - 0.54 x Gender + 0.45 x (Self_Employed - [Education +
+Credit_History]) - 0.32 x Married
+
+-   All the variables have a high contribution
+
+-   The highest contributor is the gender. Hence, PCB1 can be consider
+    to mainly represent gender.
+
+-   There is also significant contribution from self-employment status,
+    educational status and presence of credit history, where
+    self-employment status is contrasted with the other two.
+
+PCB2 = - 0.73 x Married + 0.41 x Credit_History - 0.38 x Gender + 0.33 x
+Education - 0.23 x Self_Employed
+
+-   The main contributor is marital status with some comparison to the
+    presence of a credit history.
+
+-   Hence, PCB2 mainly represents the difference between the applicant's
+    gender and their credit history.
+
+PCB3 = - 0.67 x Education + 0.53 x Gender - 0.44 x Married - 0.23 x
+Self_Employed + 0.13 x Credit_History
+
+-   The two largest negative contributors are the education status and
+    marital status.
+
+-   The largest positive contributor is gender.
+
+-   Thus, PCB3 is represented by the compared effect of educational and
+    marital status against gender.
+
+PCB4 = 0.71 x Self_Employed + 0.69 x Credit_History + 0.09 x (Gender -
+Education) + 0.07 x Married
+
+-   The dominating variables are the self-employment status and the
+    presence of a credit history.
+
+-   Therefore, PCB4 represents largely the combined effect of an
+    applicant's self-employment status and their credit history.
+
+```{r echo=FALSE}
+# Combine numerical, categorical variables and Property_Area and target variable
+train.pcadata <- cbind(pcamodel$x[, 1:4], pcanummodel$PCs, balanced.data[,c("Property_Area", "Loan_Status")])
+
+# rename components from PCA for binary data
+train.pcadata <- train.pcadata %>%
+  rename(PCB1 = `1`,
+         PCB2 = `2`,
+         PCB3 = `3`,
+         PCB4 = `4`)
+```
+
+After performing PCA, the numerical and categorical results were
+combined into a single dataset along with the target variable and the
+variable Property Area. This new dataset is the training set that will
+be used for later analysis and modeling.
+
+```{r echo=FALSE}
+# convert the binary variables from the testing set to type numeric
+test.data[cate] <- lapply(test.data[cate], function(x) as.numeric(as.character(x)))
+
+# predict test data
+test.pca1 <- predict(pcamodel, newdata = test.data[, numeric])
+test.pca2 <- predict(pcanummodel, newdata = test.data[, cate])
+test.pcadata <- cbind(test.pca1[, 1:4], test.pca2, test.data[, c("Property_Area", "Loan_Status")])
+
+# rename components from PCA for binary data
+test.pcadata <- test.pcadata %>%
+  rename(PCB1 = `1`,
+         PCB2 = `2`,
+         PCB3 = `3`,
+         PCB4 = `4`)
+```
+
+The same measures are applied to the test data sets to ensure
+consistency. That is, the logistic and standard PCAs obtained from the
+training set were applied to the test set.
+
+# Machine Learning
+
+## Unsupervised Learning
+
+For this section, we will perform clustering analysis which is an
+unsupervised learning method in order to group individuals with similar
+loan applications into clusters. Two clustering methods will be used:
+k-Prototypes and Gower Distance. Unsupervised learning differs from
+supervised learning since it attempts to discover patterns in the data
+without knowing the outcome. For this reason we will work with the raw
+data as it is not required to use a training and tests set.
+
+### k-Prototypes
+
+The first clustering method we will use is k-Prototypes clustering which
+can be applied to mixed data. K-prototypes is heavily influenced by the
+majority classes since centroids are biased towards majority values.
+Consequently, we've undersampled the loan dataset to balance the number
+of approved and not approved loan applications in order to use the
+k-prototype clustering method.
+
+```{r echo=FALSE}
+#set seed for reproducibility
+set.seed(123)
+
+#store number of "No" loan state observations
+num.mal <- nrow(loanbinary[loanbinary$Loan_Status == 0,])
+
+# apply undersampling
+balanced.all.data <- loanbinary %>%
+  group_by(Loan_Status) %>%
+  sample_n(size = num.mal) %>%
+  ungroup()
+
+balanced.all.data <- as.data.frame(balanced.all.data)
+
+# check again
+table(balanced.all.data$Loan_Status)
+
+# remove target variable
+loan.kproto <- balanced.all.data %>%
+  dplyr::select(!Loan_Status)
+```
+
+Once balanced, the data contained 187 observations for each the approved
+loans and the denied loans. The target variable was then removed from
+the dataset. To start, we first we need to determine the optimal number
+of clusters. We can do so by using the standard scree test.
+
+```{r echo=FALSE, include=FALSE}
+#load required packages
+library(clustMixType)
+library(dplyr)
+library(stats)
+
+#set seed for reproducibility
+set.seed(42)
+
+#find the appropriate number of clusters using the standard scree test
+Es <- numeric(10)
+for(i in 1:10){
+  loan.clust.kproto <- kproto(loan.kproto, k = i, nstart = 20)
+  Es[i] <- loan.clust.kproto$tot.withinss
+}
+```
+
+```{r, echo=FALSE}
+#plot a scree plot of the Objective function
+plot(1:10, Es, type = "b", 
+     ylab = "Objective Function", 
+     xlab = "# Clusters",
+     main = "Scree Plot")
+```
+
+The scree plot of the objective function E reveals a subtansial drop
+from k=1 to k=2 clusters. There is a slight decrease in the objective
+function E from k=2 to k=5. Beyond k=5, the rate of decline becomes less
+impactful, indicating minimized returns in model improvement. Using the
+elbow method, the optimal number of clusters, where no stronger
+improvements can be seen is k = 3.
+
+Therefore, we select k=3 clusters for our analysis.
+
+In applying the kproto function to our balanced data, we want to choose
+nstart to be large enough to give us a better chance of finding global
+optimum.
+
+```{r echo=FALSE, include=FALSE}
+#set seed for reproducibility
+set.seed(42)
+
+#k-prototype Clustering
+loan.3proto <- kproto(loan.kproto, k = 3, nstart = 20)
+```
+
+```{r echo=FALSE}
+# view clusters
+loan.3proto
+```
+
+The results correctly indicate there are 5 numeric predictors and 6
+categorical predictors. It also lists the sizes of each cluster which is
+the number of points in a cluster and the within cluster error which is
+the sum of squared distances between each point in a cluster and the
+cluster’s centroid.
+
+Cluster 1 has very few points and the smallest within cluster error.
+Cluster 3 has a very large number of points and the largest within
+cluster error.
+
+```{r echo=FALSE}
+
+#add cluster numbers into a dataset with loan status
+loan.cluster <- balanced.all.data[,12, drop = FALSE]
+loan.cluster$Cluster <- loan.3proto$cluster
+
+#view distribution of loan status in clusters
+table(loan.cluster$Cluster, loan.cluster$Loan_Status)
+prop.table(table(loan.cluster$Cluster, loan.cluster$Loan_Status), margin = 1)
+
+```
+
+The distribution of loan status within each cluster is alarming.
+Although there is a dominating loan status within each cluster, the
+split is almost 50-50.
+
+If we consider the majority class within each cluster, we can assign
+cluster 1 and 2 to denied loan applications and cluster 3 to approved
+loan applications.
+
+Let’s view the summary and the visualization for more details on how
+much proportion of each feature the clusters represents:
+
+```{r echo=FALSE}
+#view summary
+summary(loan.3proto)
+```
+
+```{r echo=FALSE}
+#2 by 2 grid for plots
+par(mfrow=c(2,2))
+
+#create plots to view the distributions
+clustMixType::clprofiles(object = loan.3proto, x = balanced.all.data)
+```
+
+In the plots, cluster 1 is represented in green, cluster 2 in yellow and
+cluster 3 in purple.
+
+**Cluster 1 (1 approved loan, 2 denied loan):**
+
+This cluster has a size of three points. It consists entirely of
+applicants that are male, married, graduates, and have no co-applicant
+income. The number of dependents vary and the property area in which
+they live is evenly distributed. Comapred to the other clusters, they
+have the highest requested loan amount and the lowest loan amount term
+with a narrower range. In comparing this cluster's proportional
+distribution against the proportional distribution of the other two
+clusters, it has the most self-employed applicants and the most
+applicants with no credit history.
+
+Many of the attributes are skewed due to this cluster containing a very
+small number of points. As a result, this cluster dominates many of the
+attributes. Considering this, for the next two clusters, we will compare
+them with each other and exclude cluster 1.
+
+**Cluster 2 (60 approved loan, 75 denied loan) and Cluster 3 (126
+approved loan, 110 denied loan):**
+
+Cluster has a size of 135 points and Cluster 3 has a size of 236 points.
+Proportionally, Cluster 2 contains more individuals that are female,
+unmarried, self-employed, and slightly more those with a credit history
+and that are graduates than Cluster 3. On average, applicants in Cluster
+2 have around 0 dependents and those in Cluster 3 have around 1.
+Compared to cluster 3, Cluster 2 has on average applicants with a higher
+income, lower co-applicant income, requested higher loan amount and
+within a wider range, and a slightly higher loan term with a narrower
+range. Cluster 2 had applicants that mostly live in urban areas and
+Cluster 3 has applicants that mostly live in semi-urban areas.
+
+### Gower Distance
+
+The next method we will use is Gower distance. It can be used with class
+imbalance datasets and so we will use the processed loan data.
+
+```{r echo=FALSE}
+#load required packages
+library(cluster)
+library(Rtsne)
+library(ggplot2)
+library(prcr)
+
+#calculate gower distance
+#remove target before and specify the types
+gower_dist <- daisy(loanbinary[, -12],
+                    metric = "gower",
+                    type = list(asymm = c("Gender", "Married", "Education",
+                                          "Self_Employed", "Credit_History"),
+                                factor = c("Property_Area"),
+                                logratio = c("ApplicantIncome", "Dependents",
+                                             "CoapplicantIncome", "LoanAmount"),
+                                integer = c("Loan_Amount_Term")))
+
+summary(gower_dist)
+```
+
+The plots in the visualization section show that the numeric variables
+Applicant Income, Dependents, coapplicant Income and Loan Amount are
+right skewed, so a log transformation will be applied to these variables
+when calculating the Gower distance. Additionally, we need to specify
+the variable types for the categorical variables. The binary variables
+are all asymmetric as was seen in the visualization section of this
+report, and so will be entered as asymmetric binary variables. As for
+property area, it will be considered as a factor. Since we want to
+exclude the target variable, Loan_Status, from the Gower distance
+calculation, we have removed it from the analysis.
+
+We can display the most similar and dissimilar pairs of points to verify
+for any odd results.
+
+```{r echo=FALSE}
+#format as matrix
+gower_mat <- as.matrix(gower_dist)
+
+#output most similar pair
+loanbinary[which(gower_mat == min(gower_mat[gower_mat != min(gower_mat)]),
+        arr.ind = TRUE)[1, ], ]
+```
+
+The most similar pair of points have many equal attributes or attributes
+with values that are close in range. Their attributes are also those
+that are most common in the data. Both are applicants with an approved
+loan status.
+
+```{r echo=FALSE}
+#output most dissimilar pair
+loanbinary[which(gower_mat == max(gower_mat[gower_mat != max(gower_mat)]),
+        arr.ind = TRUE)[1, ], ]
+```
+
+As for the dissimilar pair all their attributes are opposing and have a
+great difference between their values. However, both are applicants with
+a denied loan status.
+
+```{r echo=FALSE}
+#calculate silhouette width for many k using PAM
+sil_width <- c(NA)
+
+for(i in 2:20){
+  pam_fit <- pam(gower_dist,
+                 diss = TRUE,
+                 k = i)
+  
+  sil_width[i] <- pam_fit$silinfo$avg.width
+}
+
+#plot sihouette width (higher is better)
+plot(1:20, sil_width,
+     xlab = "Number of clusters",
+     ylab = "Silhouette Width")
+lines(1:20, sil_width)
+```
+
+We want to choose the number of cluster with the highest silouette
+width. Using the elbow method, we will select k = 3.
+
+Let's view the summary and the medoids:
+
+```{r}
+pam_fit <- pam(gower_dist, diss = TRUE, k = 3)
+
+pam_results <- loanbinary %>%
+  mutate(cluster = pam_fit$clustering) %>%
+  group_by(cluster) %>%
+  do(the_summary = summary(.))
+
+pam_results$the_summary
+```
+
+Based on the cluster summaries, the model did not produce strongly
+distinct groupings with respect to loan status. They have instead
+perfectly clustered by property area.
+
+Examining the medoids, which are the most representative data points
+within each cluster, provides some insight. The medoids are as follows:
+
+```{r}
+#view medoids
+loanbinary[pam_fit$medoids, ]
+```
+
+Although many binary variables (Gender, Married, Education,
+Self-Employed, and Credit History) are asymmetric and do not vary across
+medoids, some distinctions emerge in the other features.
+
+The most notable differences between the medoids lie in the number of
+dependents, the range of applicant and co-applicant incomes, and the
+property area. The medoid for Cluster 1 has 2 dependents, the lowest
+applicant and co-applicant incomes among the three, and an urban
+property area. The medoid for Cluster 3 has 0 dependents, the highest
+applicant and co-applicant incomes, and a semi-urban property area.
+Meanwhile, the medoid for Cluster 2 falls between the other two in terms
+of income, has 1 dependent, and is associated with a rural property
+area.
+
+```{r}
+tsne_obj <- Rtsne(gower_dist, is_distance = TRUE)
+
+tsne_data <- tsne_obj$Y %>%
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam_fit$clustering),
+         name = loanbinary$Loan_Status)
+
+ggplot(aes(x = X, y = Y), data = tsne_data) +
+  geom_point(aes(color = cluster))
+```
+
+The clusters are very well-separated, with no overlapping points.
+However this clustering has reflected more upon the property area of the
+applicants rather than their loan status. Cluster 1 and 3 which
+represent the approved loans are further south on the graph than Cluster
+2 which represents the denied loans.
+
+Hence, the Gower distance clustering method did not effectively separate
+the clusters based on loan status but instead their property area. The
+medoids did not differ greatly but did identify two clusters that are
+primarily associated with approved loans and one for not approved.
+
+## Supervised Learning
+
+The goal of supervised learning in this project is to develop predictive
+models that classify loan applications as approved or denied based on
+applicant attributes. We compare three algorithms, logistic regression,
+decision tree, and random forest using metrics such as accuracy,
+sensitivity, specificity, and area under the ROC curve. This comparison
+highlights trade‑offs between predictive performance and
+interpretability to inform model selection for real‑world deployment.
+
+### Logistic
+
+We begin with a logistic regression model to estimate the probability of
+loan approval as a function of all predictor variables.
+
+```{r}
+# Fit the logistic regression model using all available predictors
+logit_model <- glm(Loan_Status ~ ., data = train.pcadata, family = binomial)
+
+# Display summary of the fitted model to inspect coefficients and significance
+summary(logit_model)
+```
+
+The intercept is highly significant, equal to the sample mean for the
+urban property area and the sample mean of the response when the PCs
+(numeric variables) are equal to 0.
+
+Out of all the predictors, we have 4 that are significant; PCB1, PCB2,
+PCB4, and semi-urban property area. This model suggest that the PCs have
+very little statistical significance in relation to the response. Hence,
+PCA on numeric variables did not improve predictive ability.
+
+PCB1: Dominated by Gender, Self_Employed, Education, and Credit_History
+Estimate: -0.210327
+
+Interpretation: A higher score on PCB1 (e.g., being male, self-employed,
+less educated, or lacking credit history) is associated with a decrease
+in the log-odds of loan approval.
+
+PCB2: Primarily influenced by Marital Status and Credit_History
+Estimate: 0.119837
+
+Interpretation: A higher PCB2 score (e.g., being unmarried with a good
+credit history) correlates with an increase in the log-odds of loan
+approval.
+
+PCB4: Driven by Self_Employed and Credit_History Estimate: 0.215232
+
+Interpretation: Individuals who are self-employed and have a credit
+history (higher PCB4 scores) are more likely to have their loans
+approved.
+
+All three principal‐component predictors are highly statistically
+significant in the loan‐approval model at the α=0.001 level. This robust
+evidence confirms that the underlying factors:gender, self‑employment,
+education, marital status, and credit history which captured by these
+components exert a strong and reliable influence on the log‑odds of loan
+approval.
+
+```{r}
+# Predict probabilities and class labels on the test set
+test_probs <- predict(logit_model, newdata = test.pcadata, type = "response")
+test_pred  <- ifelse(test_probs > 0.5, 1, 0)
+```
+
+```{r}
+# confusion matrix
+library(caret)
+conf_matrix <- confusionMatrix(as.factor(test_pred), as.factor(test.pcadata$Loan_Status))
+print(conf_matrix)
+```
+
+True Positives (TP) = 24
+
+True Negatives (TN) = 64
+
+False Positives (FP) = 18
+
+False Negatives (FN) = 13
+
+```{r}
+# calculate AUC result
+library(pROC)
+auc_value <- auc(test.pcadata$Loan_Status, test_probs)
+
+# Create a data frame with the performance metrics
+logperformance <- data.frame(
+  Value = c(conf_matrix$overall['Accuracy'],
+            conf_matrix$byClass['Recall'], 
+            conf_matrix$byClass['Precision'], 
+            conf_matrix$byClass['F1'], 
+            auc_value)
+)
+
+rownames(logperformance) <- c("Accuracy", "Recall", "Precision", "F1", "AUC")
+
+# Print the summary table
+print(logperformance)
+```
+
+**Fair Recall (65%)**
+
+We’re catching only about 65% of the actual approvals, whereas 35% of
+valid “approve” cases are slipping through as false negatives.
+
+**Less Than Fair Precision (57%)**
+
+When the model says “approve,” it’s correct roughly 57% of the time,
+meaning 43% of those flagged get rejected in reality. This result is not
+ideal as it is just above random.
+
+**Fair F1 (61%)**
+
+Precision and recall are slightly distanced, yielding an F1 of 61%.
+There is some bias toward one error type.
+
+**Moderate Accuracy (74%)**
+
+Good overall, but reflects the underlying class imbalance (around 74%
+approvals).
+
+**Good AUC (80%)**
+
+The model has good discriminative power, but there’s room for
+improvement. Ideally an AUC of above 0.80 has stronger separation.
+
+### Tree Classification
+
+Next, we train a decision tree classifier using the rpart package.
+
+```{r echo=FALSE}
+# apply classification tree rpart() method
+library(rpart)
+
+# Build the tree model using the 6 principal components to predict Class
+treemodel <- rpart(Loan_Status ~ ., data = train.pcadata, method = "class", minbucket = 10)
+
+x <- summary(treemodel)
+```
+
+The decision‑tree model distilled the 300 loan records into a
+seven‑split structure that is both interpretable and reasonably
+accurate:
+
+Key drivers: Two transformed features—PCB4 and PCB2—account for almost
+80% of the total split improvement. A very low PCB4 (\< –3.55) alone
+flags a loan as almost certainly bad (node2, error ≈3%), while an
+extremely low PCB2 (\< –5.13) performs the same gate‑keeping role for
+the rest of the portfolio (node6).
+
+Refinements: Applicants who clear those two hurdles are sorted by PC4,
+Property_Area, and, to a lesser extent, PC3/PC1. These secondary splits
+raise the posterior probability of a good loan (class1) from roughly 60%
+at node3 to nearly 90% in the “sweet‑spot” leaf.
+
+Model size vs reliability Cross‑validation points to the subtree with
+CP=0.02 as the sweet spot: it trims three low‑value splits without
+sacrificing predictive power, holding the 10‑fold mis‑classification
+rate at ≈33%. Keeping additional splits (CP\<0.02) yields no measurable
+gain.
+
+Performance perspective: A 33% error rate is in line with the 25–40%
+leaf‑level losses shown in the print‑out, suggesting the tree
+generalises about as well as it fits. Compared with our earlier k‑NN and
+logistic models, the tree trades a few points of accuracy for full
+transparency in how each decision is reached.
+
+```{r echo=FALSE}
+plot(treemodel, main = "Classification Tree using rpart()", margin = 0.1)
+text(treemodel, use.n = T, all = T, cex = 1)
+```
+
+The pruned classification tree shows that loans with very negative PCB4
+values (\< –3.55), or if that hurdle is cleared—very negative PCB2
+values (\< –5.13), are overwhelmingly likely to default, whereas the
+remaining applicants are progressively sorted by property area and
+mid‑range PC4/PC3 thresholds into branches whose default risk steadily
+declines, ending in a semi‑urban subgroup with moderate component scores
+where roughly 9 out of 10 loans succeed, thereby cleanly segmenting the
+entire portfolio into high, medium, and low risk tiers with just seven
+easy to explain rules.
+
+```{r echo=FALSE}
+# predict the test data
+treepred <- predict(treemodel, newdata = test.pcadata, type = "class")
+summary(treepred)
+
+# compare the predict result with real data
+table(as.integer(as.character(unname(treepred)))-as.integer(as.character(test.pcadata$Loan_Status)))
+```
+
+This output is showing, for each test case, the difference:
+predicted_class − actual_class –1 (count=24) Predicted 0 (deny) but
+actual1 (approve) =\> false negatives (we missed 24 real approvals).
+
+0 (count=79) Predicted = actual =\> correct predictions (79 in total).
+
+1 (count=16) Predicted 1 (approve) but actual 0 (deny) =\> false
+positives (we over‑approved 16 denials).
+
+```{r echo=FALSE}
+# confusion matrix
+library(caret)
+confusion.matrix <- confusionMatrix(treepred, as.factor(test.pcadata$Loan_Status))
+print(confusion.matrix)
+```
+
+Confusion Matrix
+
+True negatives (correctly predicted approvals) = 58
+
+True positives (correctly predicted denials) = 21
+
+False positives (predicted deny but actually approve) = 24
+
+False negatives (predicted approve but actually deny) = 16
+
+With this test set the tree gets 66% overall accuracy, but because
+always guessing the majority class would already give 69%, the gain is
+statistically insignificant (p≈0.76) and agreement beyond chance remains
+only fair (k≈0.26); it manages to catch 57% of the truly bad loans
+(sensitivity) while correctly clearing 71% of the good ones
+(specificity), yet its low precision of 47% means that more than half
+the applicants it flags as “bad” are actually good, whereas its negative
+predictive value of 78% shows that borrowers it labels “good” are indeed
+safe nearly four times out of five, producing a balanced accuracy of
+0.64 that signals moderate,but not compelling discriminatory power.
+
+```{r echo=FALSE}
+# calculate AUC result
+library(pROC)
+aucresult <- auc(roc(as.factor(test.pcadata$Loan_Status), as.integer(as.character(unname(treepred)))))
+
+
+# Create a data frame with the performance metrics
+treeperformance <- data.frame(
+  Value = c(confusion.matrix$overall['Accuracy'],
+            confusion.matrix$byClass['Recall'], 
+            confusion.matrix$byClass['Precision'], 
+            confusion.matrix$byClass['F1'], 
+            aucresult)
+)
+
+rownames(treeperformance) <- c("Accuracy", "Recall", "Precision", "F1", "AUC")
+
+# Print the summary table
+print(treeperformance)
+```
+
+Not beating the naive baseline: Because only 31% of applicants are
+actually bad, a trivial rule that rubber stamps everyone as good hits
+69% accuracy,higher than the tree’s 66%. The McNemar and NIR p‑values
+confirm the gap is not statistically significant.
+
+Moderate recall, low precision: Recall 0.57 says the model intercepts
+only a bit more than half the truly risky loans. Precision 0.47 says
+that, of the applicants it does decline, more than half would have
+repaid—a costly loss of business.
+
+Skew toward false alarms: The model is more willing to shout “risk” than
+to miss danger, but it still misses 16 bad loans and simultaneously
+blocks 24 good ones in this 119 loan test sample. That is a 1:1.5
+trade‑off between avoided defaults and lost revenue.
+
+Discrimination is only “fair.” An AUC of 0.64 and balanced accuracy of
+0.64 place the tree in the lower middle tier of credit risk models.
+
+### KNN
+
+To complement our tree‐based and regression approaches, we apply a
+k‑nearest neighbors (kNN) classifier, which predicts loan approval by
+finding the k most similar past applications in feature space.
+
+```{r echo=FALSE}
+library(class)
+
+#training set without target variable
+train <- train.pcadata[, 1:9]
+
+#testing set without target variable
+test <- test.pcadata[, 1:9]
+
+#load library for knn
+library(class)
+
+#create vector that will store the accuracies
+error.k <- c()
+
+#calculate out of sample error the best k for odd k from 1 to 50
+for (k in seq(1, 40, by = 2)) {
+  class.knn <- knn(train = train, 
+                        test = test, 
+                        cl = train.pcadata$Loan_Status, 
+                        k = k)
+  
+  Error <- mean(class.knn != test.pcadata$Loan_Status) 
+  error.k <- c(error.k, 1 - Error) #store accuracy
+  print(paste('k =', k, 'Accuracy =', 1 - Error)) 
+}
+```
+
+At k=27, the k‑NN classifier reaches its peak accuracy of ≈84%, the
+highest of all tested values, placing it firmly in the optimal
+bias–variance regime.
+
+```{r echo=FALSE}
+#plot accuracies for different values of k
+plot(seq(1, 40, by = 2), error.k, type = "b", xlab = "k", ylab = "Accuracy",
+     main = "k-NN Accuracy for different k")
+```
+
+k≤7(high variance) – Accuracy hovers around 0.69‑0.72 and even dips at
+k=5, showing that a very small neighborhood overfitts to local noise.
+
+k=9‑17(stabilizing) – As it let each query look at more neighbors,
+accuracy climbs sharply into the 0.78‑0.82 band; the model is now
+smoothing out idiosyncratic points without yet blurring genuine class
+boundaries.
+
+k=19‑31(plateau) – The curve flattens at its high point: 0.82‑0.84,
+peaking at k=27. Any value in this strip delivers virtually the same
+performance, so pick the lower end k=19 if we need faster predictions
+and the upper end k=27 if we need the single best score.
+
+k≥33(rising bias) – Accuracy tilts down slightly toward 0.81 as the
+neighborhood grows too large and the classifier starts averaging across
+heterogeneous regions.
+
+```{r echo=FALSE}
+#preform knn for k=28
+(knnpred <- knn(train = train, test = test, cl = train.pcadata$Loan_Status,  k=21))
+```
+
+```{r}
+#load library for confusion matrix
+library(caret)
+
+#create confusion matrix
+(knn.conf.mat <- confusionMatrix(knnpred, test.pcadata$Loan_Status))
+```
+
+True Positives (TP=18) – Loans the model flags as bad and that are
+indeed bad.
+
+False Positives (FP=4) – Loans the model flags as bad but are actually
+good (costly lost business).
+
+False Negatives (FN=19) – Bad loans the model mistakenly approves
+(credit‑loss risk).
+
+True Negatives (TN=78) – Good loans correctly approved.
+
+This k‑NN setup is exceptional at sparing good customers, only 4 false
+rejections—and reliable when it does decline someone. Its one
+shortcoming is that it still misses roughly half of the truly bad loans,
+so if default avoidance is paramount we can layer in a second check or
+adjust the decision threshold to boost recall. Overall, k‑NN offers a
+strong trade off for customer‑friendly credit decisions, with
+statistically significant lift over a naïve baseline.
+
+```{r echo=FALSE}
+library(pROC)
+auc_result <- auc(roc(as.factor(test.pcadata$Loan_Status), 
+                      as.integer(as.character(unname(knnpred)))))
+
+
+# Create a data frame with the performance metrics
+knnperformance <- data.frame(
+  Value = c(knn.conf.mat$overall['Accuracy'],
+            knn.conf.mat$byClass['Recall'], 
+            knn.conf.mat$byClass['Precision'], 
+            knn.conf.mat$byClass['F1'], 
+            auc_result)
+)
+
+rownames(knnperformance) <- c("Accuracy", "Recall", "Precision", "F1", "AUC")
+knnperformance
+```
+
+The k‑NN model delivers a 0.81 overall accuracy and an AUC of 0.72,
+meaning it separates good versus bad loans substantially better than
+chance. Its precision of 0.82 tells us that when the model flags someone
+as “bad,” it is correct more than four‑fifths of the time, so we avoid
+needless rejections. At the same time, its recall of 0.49 means it
+catches roughly half of all actual defaults, and the resulting F1 score
+of 0.61 reflects a solid but improvable balance between capturing risky
+loans and sparing good ones.
+
+```{r echo=FALSE}
+comparetable <- data.frame(
+  knn = c(knnperformance[,1]),
+  logistic = c(logperformance[,1]), 
+  tree = c(treeperformance[,1])
+  )
+
+rownames(comparetable) <- c("Accuracy", "Recall", "Precision", "F1", "AUC")
+
+print(comparetable)
+```
+
+Across all five metrics the rpart tree clearly under‑performs, so we can
+set it aside. The real contest is between logistic regression and k‑NN:
+
+k‑NN
+
+Accuracy=0.81 (best)
+
+Precision=0.82 (best)
+
+Recall=0.49 (lowest)
+
+F1=0.61
+
+AUC=0.72
+
+k‑NN excels at sparing good customers when it says “decline” it’s right
+82% of the time—and delivers the highest overall hit rate, but it only
+catches half of the bad loans and its discrimination (AUC) is moderate.
+
+Logistic regression
+
+Accuracy=0.74
+
+Precision=0.57
+
+Recall=0.65 (best)
+
+F1=0.61
+
+AUC=0.80 (best)
+
+Logistic regression offers the strongest ranking ability (AUC≈0.80) and
+the highest recall, so it intercepts nearly two thirds of defaults, even
+though it sacrifices some precision and overall accuracy.
+
+Because both k‑NN and logistic achieve essentially the same F1 (around
+0.61), the choice hinges on business priorities:
+
+If avoiding false declines is paramount (retaining good customers), k‑NN
+is our top pick.
+
+If catching as many defaults as possible is critical which means
+minimising loan losses, then logistic regression is preferable.
+
+For a production system, we recommend logistic regression as the
+default, its superior AUC and recall give us the best risk separation,
+while tuning its probability threshold or combining it with a precision
+which is focused second check to control how many good customers we turn
+away.
+
+## Conclusion
+
+In this project, we developed two unsupervided learning models;
+k-Prototypes and Gower Distance, and three supervised learning models;
+logistic regression, decision tree, and k‑nearest neighbors (k‑NN).
+These were done with the goal to predict loan approval.
+
+First we preprocessed the data and applied two dimension reduction
+methods. The first was the standard PCA for the continuous variable. We
+selected the first 4 components that covered around 90% of the
+variability. The second method was logistic PCA for binary variables. We
+selected the first 4 components from this model that also covered around
+90% of the variance in the data.
+
+The unsupervised learning models were constructed using the processed
+data for Gower distance and the balanced processed data for
+k-Prototypes. The clusters created by both models did not succeed with
+separating very well by loan status. The k-Prototypes model had a number
+of both approved and rejected loan that were very close in range and
+created a cluster of only 3 points. The Gower Distance also did not
+succeed very well by clustering according to property area rather than
+loan status.
+
+The supervised models were fitted using the balanced training set and
+the test set.
+
+Data preprocessing & PCA
+
+Raw borrower attributes: income, loan amount, term and dependents were
+transformed via principal components (PC1–PC4) to capture the main
+sources of variance.
+
+Model training & evaluation
+
+We fit each model on a 70/30 train/test split, measuring accuracy,
+recall (sensitivity), precision, F₁, and AUC on the hold out set.
+
+Model selection & business trade‑off
+
+The decision tree is easiest to explain but underperforms materially.
+
+k‑NN offers the highest accuracy and spares good customers which only
+has 4 false alarms, making it ideal where minimizing customer friction
+is critical.
+
+Logistic regression strikes the best balance of recall and ranking
+powerkey when avoiding loan default carries the greatest cost.
+
+Overall, our analysis suggests that logistic regression provides the
+best basis for producing loan approval scorecards, while k-NN can serve
+as an accuracy focused enhancement model in multistage decision-making
+processes.
+
+data visualization：Selina Salameh
+
+data reduction：Lening Gao
+
+dimension reduction：Lening Gao (interpretions of components by both
+Lening Gao and Selina Salameh)
+
+unsupervised learning：Selina Salameh
+
+supervised learning：Xiwei Zhang
